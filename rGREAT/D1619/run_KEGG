@@ -1,0 +1,164 @@
+library(GenomicRanges)
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(ggplot2)
+library(viridis)
+
+set.seed(42)
+options(stringsAsFactors = FALSE)
+
+msg <- function(...) { cat(...); cat("\n"); flush.console() }
+
+# ── Paths ───────────────────────────────────────────────────────────────
+BASE <- "/mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/peaks_by_celltype/rGREAT"
+OUT  <- file.path(BASE, "KEGG")
+dir.create(OUT, showWarnings = FALSE, recursive = TRUE)
+
+# All 6 groups
+GROUPS <- c(
+  "Dec_new_log2fc1_gained", "Dec_new_log2fc1_lost",
+  "Str1_new_log2fc1_gained", "Str1_new_log2fc1_lost",
+  "Str2_new_log2fc1_gained", "Str2_new_log2fc1_lost"
+)
+
+all_results <- list()
+
+for (grp in GROUPS) {
+  msg("=====", grp, "=====")
+  
+  rds_file <- file.path(BASE, paste0(grp, "_gene_associations.rds"))
+  if (!file.exists(rds_file)) {
+    msg("  [SKIP] no rds file")
+    next
+  }
+  
+  # ── 1. Load gene associations ──────────────────────────────────────
+  assoc <- readRDS(rds_file)
+  
+  # ── 2. Extract unique genes ────────────────────────────────────────
+  genes <- unique(unlist(assoc$annotated_genes))
+  msg("  Total unique genes:", length(genes))
+  
+  if (length(genes) < 5) {
+    msg("  [SKIP] too few genes")
+    next
+  }
+  
+  # ── 3. Symbol → Entrez ────────────────────────────────────────────
+  gene_entrez <- tryCatch(
+    bitr(genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db),
+    error = function(e) NULL
+  )
+  
+  if (is.null(gene_entrez) || nrow(gene_entrez) < 5) {
+    msg("  [SKIP] too few genes mapped to Entrez")
+    next
+  }
+  
+  msg("  Symbol → Entrez mapped:", nrow(gene_entrez))
+  
+  # ── 4. KEGG enrichment (with Entrez IDs) ───────────────────────────
+  ek <- tryCatch(
+    enrichKEGG(
+      gene = gene_entrez$ENTREZID,
+      organism = "mmu",
+      keyType = "kegg",
+      pvalueCutoff = 0.05,
+      qvalueCutoff = 0.2,
+      minGSSize = 5,
+      maxGSSize = 500
+    ),
+    error = function(e) NULL
+  )
+  
+  if (is.null(ek) || nrow(ek@result) == 0) {
+    msg("  No KEGG terms")
+    next
+  }
+  
+  result_df <- ek@result
+  result_df$Group <- grp
+  write.csv(result_df, file.path(OUT, paste0(grp, "_KEGG.csv")), row.names = FALSE)
+  msg("  KEGG terms:", sum(result_df$pvalue < 0.05))
+  
+  all_results[[grp]] <- result_df
+  
+  # ── 4. Bubble plot (top 15) ────────────────────────────────────────
+  top15 <- head(result_df[result_df$pvalue < 0.05, ], 15)
+  if (nrow(top15) > 0) {
+    top15 <- top15[order(top15$Count, decreasing = TRUE), ]
+    top15$Description <- factor(top15$Description, levels = rev(top15$Description))
+    
+    p <- ggplot(top15, aes(x = Count, y = Description)) +
+      geom_point(aes(size = Count, color = -log10(pvalue))) +
+      scale_color_viridis_c(option = "D", direction = -1) +
+      scale_size_continuous(range = c(3, 8)) +
+      labs(
+        title = gsub("_new_log2fc1", " ", grp),
+        x = "Gene count", y = NULL
+      ) +
+      theme_bw() +
+      theme(
+        panel.grid.minor = element_blank(),
+        axis.text.y = element_text(size = 9),
+        plot.title = element_text(hjust = 0.5)
+      )
+    
+    ggsave(file.path(OUT, paste0(grp, "_KEGG_bubble.pdf")), p, width = 9, height = max(4, nrow(top15) * 0.35))
+  }
+}
+
+# ── 5. Combined dotplot ────────────────────────────────────────────────
+if (length(all_results) > 0) {
+  combined <- do.call(rbind, all_results)
+  
+  # Take top 3 terms per group (by pvalue)
+  top_terms <- data.frame()
+  for (g in names(all_results)) {
+    sub <- all_results[[g]]
+    sub <- sub[sub$pvalue < 0.05, ]
+    if (nrow(sub) == 0) next
+    top3 <- head(sub[order(sub$pvalue), ], 3)
+    top_terms <- rbind(top_terms, top3)
+  }
+  
+  if (nrow(top_terms) > 0) {
+    terms <- unique(top_terms$Description)
+    grid <- expand.grid(Group = names(all_results), Description = terms, stringsAsFactors = FALSE)
+    grid$log10p <- 0
+    grid$Count <- 0
+    
+    for (i in 1:nrow(grid)) {
+      hit <- combined$pvalue[combined$Group == grid$Group[i] & combined$Description == grid$Description[i]]
+      hit_count <- combined$Count[combined$Group == grid$Group[i] & combined$Description == grid$Description[i]]
+      if (length(hit) > 0 && !is.na(hit) && hit < 0.05) {
+        grid$log10p[i] <- -log10(hit)
+        grid$Count[i] <- hit_count
+      }
+    }
+    
+    grid$Description <- factor(grid$Description, levels = rev(terms))
+    grid$Group <- factor(grid$Group, levels = names(all_results))
+    
+    grid$GeneRatio <- grid$Count / max(grid$Count[grid$Count > 0])
+    
+    p <- ggplot(grid, aes(x = Group, y = Description)) +
+      geom_point(aes(size = Count, color = log10p)) +
+      scale_color_viridis_c(option = "D", direction = -1, name = "-log10(pvalue)") +
+      scale_size_continuous(name = "Gene count", range = c(1, 8)) +
+      scale_x_discrete(labels = function(x) gsub("_new_log2fc1", "", x)) +
+      theme_bw() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1, size = 9),
+        axis.text.y = element_text(size = 7),
+        panel.grid.major = element_line(linewidth = 0.3),
+        panel.grid.minor = element_blank()
+      ) +
+      labs(x = NULL, y = NULL, title = "KEGG enrichment (D16 vs D19)")
+    
+    ggsave(file.path(OUT, "KEGG_combined_dotplot.pdf"), p, width = 10, height = max(5, length(terms) * 0.3))
+  }
+}
+
+msg("\n===== ALL DONE =====")
+msg("Output:", OUT)
