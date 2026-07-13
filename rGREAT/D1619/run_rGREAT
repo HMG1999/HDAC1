@@ -1,0 +1,48 @@
+library(rGREAT)
+library(GenomicRanges)
+
+base_dir  <- "/mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/peaks_by_celltype"
+out_dir   <- file.path(base_dir, "rGREAT")
+dir.create(out_dir, showWarnings = FALSE)
+
+groups <- c("Dec_new_log2fc1", "Str1_new_log2fc1", "Str2_new_log2fc1")
+
+for (g in groups) {
+  cat("\n=======", g, "=======\n")
+
+  for (direction in c("gained", "lost")) {
+    bed_file <- file.path(base_dir, g, paste0(direction, ".bed"))
+    bed <- read.table(bed_file, header = FALSE)
+    gr  <- GRanges(bed[, 1], IRanges(bed[, 2], bed[, 3]))
+    cat(sprintf("  %s: %d peaks\n", direction, length(gr)))
+
+    if (length(gr) < 5) {
+      cat("    skip (< 5 peaks)\n")
+      next
+    }
+
+    res <- tryCatch(
+      great(gr, "GO:BP", "mm10", verbose = FALSE),
+      error = function(e) NULL
+    )
+    if (is.null(res)) next
+
+    prefix <- file.path(out_dir, paste0(g, "_", direction))
+    tb <- res@table
+    write.csv(tb, paste0(prefix, "_enrichment.csv"), row.names = FALSE)
+    assoc <- getRegionGeneAssociations(res)
+    saveRDS(assoc, paste0(prefix, "_gene_associations.rds"))
+    cat(sprintf("    gene associations saved: %d entries\n", length(assoc)))
+    cat(sprintf("    %d terms\n", nrow(tb)))
+
+    pdf(paste0(prefix, "_volcano.pdf"), width = 8, height = 6)
+    plotVolcano(res, main = paste(g, direction))
+    dev.off()
+
+    pdf(paste0(prefix, "_assoc.pdf"), width = 12, height = 4)
+    plotRegionGeneAssociations(res)
+    dev.off()
+  }
+}
+
+cat("\nAll done!\n")
