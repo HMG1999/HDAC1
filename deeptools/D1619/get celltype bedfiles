@@ -13,3 +13,7 @@ for (ct in unique_cell_types) {
   bed_file <- file.path(output_dir, paste0(ct, "_peaks.bed"))
   export(ct_peaks, bed_file, format = "bed")
 }
+
+#### .get bigwig file  ####
+
+coverageFiles <- getGroupBW(ArchRProj = proj_d16new_d19wt, groupBy = "Clusters2")
