@@ -1,0 +1,81 @@
+cd mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/pycistopic_clusters2
+conda activate create_cistarget_databases
+#module load cluster/wice/bigmem
+#module load BEDTools/2.30.0-GCC-10.3.0
+
+REGION_BED="/mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/pycistopic_clusters2/outs_pycisTopic_consensus_regions/consensus_peak_calling/consensus_regions.bed"
+GENOME_FASTA="/mnt/My_disk/Li_linghang/references/scrna/refdata-gex-mm10-2020-A/fasta/genome.fa"
+CHROMSIZES="/mnt/My_disk/Li_linghang/references/scatac/mm10.chrom.sizes"
+DATABASE_PREFIX="10x_D19_1kb_bg_with_mask"
+SCRIPT_DIR="/mnt/My_disk/Li_linghang/Wangyang_cervix_D16_D19/scenicplus/pycistopic_output/create_cisTarget_databases/"
+
+${SCRIPT_DIR}/create_fasta_with_padded_bg_from_bed1.sh \
+        ${GENOME_FASTA} \
+        ${CHROMSIZES} \
+        ${REGION_BED} \
+        mm10.10x_D19.with_1kb_bg_padding.fa \
+        1000 \
+        yes
+        
+##在这一步后，生成的fa文件检查一下序列有没有奇怪的尾缀，有的话需要去除
+awk '{
+    if (/%0::/) {  # 只对包含有%0尾缀的行进行操作
+        sub(/%0::.*$/, "")
+    }
+    print
+}' mm10.10x_D19.with_1kb_bg_padding.fa > cleaned.fa
+
+##测试一小段看看序列长度是否满足需求
+/mnt/My_disk/Li_linghang/Wangyang_cervix_D16_D19/scenicplus/cluster-buster/cbust \
+    -f 4 \
+    -c 0.0 \
+    -r 100 \
+    -b 1000 \
+    -t 1 \
+    /mnt/My_disk/Li_linghang/Wangyang_cervix_D16_D19/scenicplus/cistarget/aertslab_motif_colleciton/v10nr_clust_public/singletons/metacluster_130.3.cb \
+    /mnt/My_disk/Li_linghang/Wangyang_cervix_D16_D19/scenicplus/cistarget/clean.filtered.fa
+
+
+###环境好像坏了，切到ngsplot里面用samtools
+conda deactivate
+conda activate ngsplot
+##生成索引，查看是否有长度不满足的序列（最短要在2001bps不然报错）
+samtools faidx cleaned.fa
+conda deactivate
+conda activate create_cistarget_databases
+awk '{print $2}' cleaned.fa.fai | sort -n | uniq -c | sort -n -k2
+
+#若有，删除
+bioawk -c fastx 'length($seq) >= 2001 {print ">"$name"\n"$seq}' cleaned.fa > clean.filtered.fa
+
+conda deactivate
+conda activate ngsplot
+samtools faidx clean.filtered.fa
+
+conda deactivate
+conda activate create_cistarget_databases
+awk '{print $2}' clean.filtered.fa.fai | sort -n | uniq -c | sort -n -k2
+
+ls /mnt/My_disk/Li_linghang/spx/proj_D16_D19-callpeaks-by-Clusters2/scenicplus/output/aertslab_motif_colleciton/v10nr_clust_public/singletons > motifs.txt
+
+cp -r /mnt/My_disk/Li_linghang/Wangyang_cervix_D16_D19/scenicplus/cistarget/aertslab_motif_colleciton /mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d19_wtko/pycistopic_clusters2
+
+OUT_DIR=""${PWD}""
+CBDIR="${OUT_DIR}/aertslab_motif_colleciton/v10nr_clust_public/singletons"
+FASTA_FILE="${OUT_DIR}/clean.filtered.fa"
+MOTIF_LIST="${OUT_DIR}/motifs.txt"
+FULL_CBUST_PATH="/mnt/My_disk/Li_linghang/Wangyang_cervix_D16_D19/scenicplus/cluster-buster/cbust"
+python "${SCRIPT_DIR}/create_cistarget_motif_databases.py" \
+    --cbust "${FULL_CBUST_PATH}" \
+    -f "${FASTA_FILE}" \
+    -M "${CBDIR}" \
+    -m "${MOTIF_LIST}" \
+    -o "${OUT_DIR}/${DATABASE_PREFIX}" \
+    --bgpadding 1000 \
+    -t 40 
+
+
+
+
+
+
