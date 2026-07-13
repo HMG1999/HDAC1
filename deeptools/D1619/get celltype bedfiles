@@ -1,0 +1,15 @@
+library(GenomicRanges)
+library(rtracklayer)
+
+peaks <- getPeakSet(proj_d16new_d19wt)
+cell_types <- names(peaks)
+unique_cell_types <- unique(cell_types)
+
+output_dir <- "/mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/peaks_by_celltype"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+for (ct in unique_cell_types) {
+  ct_peaks <- peaks[names(peaks) == ct]
+  bed_file <- file.path(output_dir, paste0(ct, "_peaks.bed"))
+  export(ct_peaks, bed_file, format = "bed")
+}
