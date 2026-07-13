@@ -1,0 +1,42 @@
+library(Signac)
+library(Seurat)
+setwd('/mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/pycistopic_clusters2')
+proj_d16new_d19wt<- addGroupCoverages(ArchRProj = proj_d16new_d19wt, groupBy = "Sasmple_Clusters2",force=T)
+proj_d16new_d19wt<- addReproduciblePeakSet(
+  ArchRProj = proj_d16new_d19wt, 
+  groupBy = "Sample_Clusters2", 
+  pathToMacs2 = '/home/lilinghang/anaconda3/envs/macs2/bin/macs2',
+  force=T
+)
+proj_d16new_d19wt <- addPeakMatrix(proj_d16new_d19wt,force = T)
+
+setwd('/mnt/My_disk/Li_linghang/liumeng_HDCAC1/dataset/output/proj_d16new_d19wt/pycistopic_clusters2')
+
+peakMatrix <- getMatrixFromProject(proj_d16new_d19wt,useMatrix = "PeakMatrix")
+counts <- peakMatrix@assays@data$PeakMatrix
+df_rangers <- as.data.frame(peakMatrix@rowRanges@ranges)
+rownames(counts) <- paste(peakMatrix@rowRanges@seqnames,
+df_rangers$start,
+df_rangers$end,
+sep = "_")
+saveRDS(counts, file = "PeakMatrix.Rds")
+metadata <- as.data.frame(proj_d19_KO@cellColData)
+counts <- readRDS("PeakMatrix.Rds")
+chrom_assay <- CreateChromatinAssay(
+counts = counts,
+sep = c("_", "_"),
+genome = 'mm10',
+min.cells = 30
+)
+obj.spx <- CreateSeuratObject(
+counts = chrom_assay,
+assay = "peaks",
+meta.data = metadata,
+names.field = 1,
+names.delim = "#")
+count_matrix <- as.data.frame(obj.spx@assays$peaks$counts)
+rownames(count_matrix)
+rownames(count_matrix) <- sub("-", ":", rownames(count_matrix))
+write.table(count_matrix,file = 'pkm.tsv',sep = '\t')
+celldata= as.data.frame(obj.spx@meta.data)
+write.table(celldata,file = 'celldata.tsv',sep = '\t')
